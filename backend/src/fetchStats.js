@@ -6,10 +6,11 @@ const { saveView } = require('./db');
 
 dotenv.config();
 
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-log('🔑 GitHub Token loaded:', GITHUB_TOKEN ? '✅' : '❌ Not loaded');
+const TOKENS = process.env.GITHUB_TOKENS?.split(',') || [];
+console.log('🔑 GitHub Tokens loaded:', TOKENS.length);
+log('🔑 GitHub Tokens loaded:', TOKENS.length);
 
-async function fetchAllUserRepos() {
+async function fetchAllUserRepos(token) {
   const repos = [];
   let page = 1;
   let more = true;
@@ -19,7 +20,7 @@ async function fetchAllUserRepos() {
     try {
       const res = await axios.get(url, {
         headers: {
-          Authorization: `token ${GITHUB_TOKEN}`,
+          Authorization: `token ${token}`,
           'User-Agent': 'GitHub-Stats-Tracker'
         }
       });
@@ -32,7 +33,7 @@ async function fetchAllUserRepos() {
         page++;
       }
     } catch (err) {
-      log('❌ Error fetching user repos:', err.response?.data || err.message);
+      log('❌ Error fetching repos:', err.response?.data || err.message);
       break;
     }
   }
@@ -40,50 +41,53 @@ async function fetchAllUserRepos() {
   return repos;
 }
 
-async function fetchRepoViews(repo) {
+async function fetchRepoViews(token, repo) {
   const url = `https://api.github.com/repos/${repo}/traffic/views`;
-
   try {
     const res = await axios.get(url, {
       headers: {
-        Authorization: `token ${GITHUB_TOKEN}`,
+        Authorization: `token ${token}`,
         'User-Agent': 'GitHub-Stats-Tracker'
       }
     });
-
     const views = res.data.views;
     for (const day of views) {
-      const date = day.timestamp.slice(0, 10); // YYYY-MM-DD
+      const date = day.timestamp.slice(0, 10);
       saveView(repo, date, day.count, day.uniques);
     }
-
     log(`✅ Synced: ${repo}`);
   } catch (err) {
     log(`❌ Error fetching stats for ${repo}:`, err.response?.data || err.message);
+    console.log('🔎 Full error:', err.response?.status, err.response?.data || err.message);
   }
 }
 
-// 📦 Main sync function
 async function runSync() {
-  const repos = await fetchAllUserRepos();
 
-  log('\n📦 Repositories found:');
-  repos.forEach((repo, i) => {
-    log(`${i + 1}. ${repo}`);
-  });
+  for (let i = 0; i < TOKENS.length; i++) {
+    const token = TOKENS[i];
+    log(`🔄 Syncing data using token ${i + 1}`);
 
-  for (const repo of repos) {
-    await fetchRepoViews(repo);
+    const repos = await fetchAllUserRepos(token);
+    log(`📁 Repos found:`, repos.length);
+
+    for (const repo of repos) {
+      await fetchRepoViews(token, repo);
+
+      // 🕒 Delay between repo API calls (helps prevent secondary rate limit)
+      await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay
+    }
+
+    // 🕒 Optional: Delay between tokens if you scale to many accounts
+    await new Promise(resolve => setTimeout(resolve, 2000)); // 2s delay
   }
 
-  log('\n✅ All repositories synced');
+  log('\n✅ All accounts synced');
 }
 
-// 🚀 Run once on start
-runSync();
 
-// ⏰ Schedule to run every day at 9:00 AM
-cron.schedule('0 9 * * *', () => {
+runSync();
+cron.schedule('1 0 * * *', () => {
   log('\n🕒 Running daily GitHub sync...');
   runSync();
 });
